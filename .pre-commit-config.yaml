@@ -1,0 +1,10 @@
+repos:
+  - repo: local
+    hooks:
+      - id: my-tests
+        name: Run Python Tests
+        entry: uv run pytest tests/test_aws_object.py -v --tb=short -x
+        language: system
+        types: [python]
+        stages: [pre-commit]
+        verbose: true
