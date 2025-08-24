@@ -2,6 +2,7 @@ import boto3
 import os
 
 # Test comment for pre-commit demo
+# Another test comment to trigger pre-commit
 class AwsObject():
     def __init__(self,aws_access_key_id,aws_secret_access_key,owner,region_name = "us-east-1"):
         self.aws_access_key_id = aws_access_key_id
