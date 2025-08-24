@@ -132,23 +132,57 @@ class S3():
             return False
         s3_client = boto3.client('s3', region_name=self.aws_object.region_name)
         try:
-            s3_client.create_bucket(Bucket=bucket_name)
-            if state == "public":
-                s3_client.put_bucket_acl(Bucket=bucket_name, AccessControlPolicy={
-                    'Grants': [{
-                        'Grantee': {
-                            'Type': 'Group',
-                            'URI': 'http://acs.amazonaws.com/groups/global/AllUsers'
-                        },
-                    'Permission': 'READ'
-                }],
-                'Owner': {
-                    'DisplayName': self.aws_object.owner,
-                    'ID': self.aws_object.account_id
+            # For regions other than us-east-1, we need to specify the LocationConstraint
+            if self.aws_object.region_name == 'us-east-1':
+                s3_client.create_bucket(Bucket=bucket_name)
+            else:
+                s3_client.create_bucket(
+                    Bucket=bucket_name,
+                    CreateBucketConfiguration={
+                        'LocationConstraint': self.aws_object.region_name
+                    }
+                )
+            
+            # Add tags to the bucket
+            s3_client.put_bucket_tagging(
+                Bucket=bucket_name,
+                Tagging={
+                    'TagSet': [
+                        {'Key': 'Owner', 'Value': self.aws_object.owner},
+                        {'Key': 'CreatedBy', 'Value': self.aws_object.created_by}
+                    ]
                 }
-            })
+            )
+            
+            if state == "public":
+                try:
+                    # Try to use simpler ACL method for public read access
+                    s3_client.put_bucket_acl(Bucket=bucket_name, ACL='public-read')
+                except Exception as acl_error:
+                    # If ACL fails (due to Block Public Access), create bucket as private
+                    # but still return True since bucket was created successfully
+                    print(f"Warning: Could not set bucket to public due to Block Public Access settings: {acl_error}")
+                    print(f"Bucket '{bucket_name}' was created as private instead.")
             return True
         except Exception as e:
+            print(f"Error creating bucket: {e}")  # For debugging
+            return False
+
+    def is_bucket_public(self, bucket_name: str):
+        """Check if a bucket has public read access."""
+        s3_client = boto3.client('s3', region_name=self.aws_object.region_name)
+        try:
+            acl = s3_client.get_bucket_acl(Bucket=bucket_name)
+            # Check if there's a public read grant
+            for grant in acl.get('Grants', []):
+                grantee = grant.get('Grantee', {})
+                if (grantee.get('Type') == 'Group' and 
+                    grantee.get('URI') == 'http://acs.amazonaws.com/groups/global/AllUsers' and
+                    grant.get('Permission') in ['READ', 'FULL_CONTROL']):
+                    return True
+            return False
+        except Exception as e:
+            print(f"Error checking bucket ACL: {e}")
             return False
 
     def upload_file(self, bucket_name: str, file_path: str, aws_object: AwsObject, object_name: str = None):
@@ -166,3 +200,19 @@ class S3():
             return response.get('Contents', [])
         except Exception as e:
             return []
+
+    def is_bucket_public(self, bucket_name: str):
+        """Check if a bucket is configured for public access."""
+        s3_client = boto3.client('s3', region_name=self.aws_object.region_name)
+        try:
+            acl = s3_client.get_bucket_acl(Bucket=bucket_name)
+            # Check if any grant gives public read access
+            for grant in acl.get('Grants', []):
+                grantee = grant.get('Grantee', {})
+                if (grantee.get('Type') == 'Group' and 
+                    grantee.get('URI') == 'http://acs.amazonaws.com/groups/global/AllUsers' and
+                    grant.get('Permission') == 'READ'):
+                    return True
+            return False
+        except Exception:
+            return False

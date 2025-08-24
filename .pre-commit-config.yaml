@@ -1,9 +1,9 @@
 repos:
-  - repo: local
+-   repo: local
     hooks:
-      - id: my-tests
-        name: Run Python Tests
-        entry: uv run pytest tests/test_aws_object.py -v --tb=short -x
+    -   id: pytest-local
+        name: Run local python tests
+        entry: uv run pytest tests/test_unit_s3.py tests/test_unit_ec2.py
         language: system
         types: [python]
         stages: [pre-commit]
