@@ -1,8 +1,6 @@
 import boto3
 import os
 
-# Test comment for pre-commit demo
-# Another test comment to trigger pre-commit
 class AwsObject():
     def __init__(self,aws_access_key_id,aws_secret_access_key,owner,region_name = "us-east-1"):
         self.aws_access_key_id = aws_access_key_id
@@ -125,8 +123,46 @@ class Ec2():
             ls += f"instance id: f{i}\n"
 
 
+class S3():
+    def __init__(self, aws_object: AwsObject):
+        self.aws_object = aws_object
 
+    def create_bucket(self, bucket_name: str, state = "private"):
+        if state not in ["private", "public"]:
+            return False
+        s3_client = boto3.client('s3', region_name=self.aws_object.region_name)
+        try:
+            s3_client.create_bucket(Bucket=bucket_name)
+            if state == "public":
+                s3_client.put_bucket_acl(Bucket=bucket_name, AccessControlPolicy={
+                    'Grants': [{
+                        'Grantee': {
+                            'Type': 'Group',
+                            'URI': 'http://acs.amazonaws.com/groups/global/AllUsers'
+                        },
+                    'Permission': 'READ'
+                }],
+                'Owner': {
+                    'DisplayName': self.aws_object.owner,
+                    'ID': self.aws_object.account_id
+                }
+            })
+            return True
+        except Exception as e:
+            return False
 
+    def upload_file(self, bucket_name: str, file_path: str, aws_object: AwsObject, object_name: str = None):
+        s3_client = boto3.client('s3', region_name=aws_object.region_name)
+        try:
+            s3_client.upload_file(file_path, bucket_name, object_name or file_path, ExtraArgs={"Tagging": f"Owner={aws_object.owner}&CreatedBy={aws_object.created_by}"})
+            return True
+        except Exception as e:
+            return False
 
-        
-    
+    def list_files(self, bucket_name: str, aws_object: AwsObject):
+        s3_client = boto3.client('s3', region_name=aws_object.region_name)
+        try:
+            response = s3_client.list_objects_v2(Bucket=bucket_name, Tagging=f"Owner={aws_object.owner}&CreatedBy={aws_object.created_by}")
+            return response.get('Contents', [])
+        except Exception as e:
+            return []
