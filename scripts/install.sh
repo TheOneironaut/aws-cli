@@ -57,22 +57,34 @@ case "$SHELL_TYPE" in
     ;;
 esac
 
-
-# Use python directly to generate the completion command, to avoid click Aborted error in docker context
+# Generate completion command using local Python installation
 if [ -n "$PROFILE_FILE" ]; then
-
-  # Generate completion command. We must use the host awsctl script and have it generate the completion script.
-  # The awsctl script will call 'docker run' to execute the command with the right dependencies.
-  COMPLETION_SCRIPT_CMD=$(_AWSCTL_COMPLETE=1 "$BIN_DIR/awsctl" completion "$SHELL_TYPE")
-
-  if ! grep -q "$COMPLETION_SCRIPT_CMD" "$PROFILE_FILE" 2>/dev/null; then
-    echo "Adding completion to $PROFILE_FILE"
-    echo "" >> "$PROFILE_FILE"
-    echo "# awsctl completion" >> "$PROFILE_FILE"
-    echo "$COMPLETION_SCRIPT_CMD" >> "$PROFILE_FILE"
-    echo "Restart your shell or source your profile file to enable completion."
+  # Check if python3 is available
+  if command -v python3 >/dev/null 2>&1; then
+    # Install required packages temporarily for completion generation
+    echo "Installing required packages temporarily for completion setup..."
+    pip3 install --user boto3==1.40.13 click==8.1.7 >/dev/null 2>&1
+    
+    # Generate completion script using local Python
+    cd "$REPO_DIR"
+    COMPLETION_SCRIPT_CMD=$(_AWSCTL_COMPLETE=1 python3 main.py completion "$SHELL_TYPE" 2>/dev/null)
+    
+    # Clean up temporary packages
+    pip3 uninstall -y boto3 click >/dev/null 2>&1
+    
+    if [ -n "$COMPLETION_SCRIPT_CMD" ] && ! grep -q "$COMPLETION_SCRIPT_CMD" "$PROFILE_FILE" 2>/dev/null; then
+      echo "Adding completion to $PROFILE_FILE"
+      echo "" >> "$PROFILE_FILE"
+      echo "# awsctl completion" >> "$PROFILE_FILE"
+      echo "$COMPLETION_SCRIPT_CMD" >> "$PROFILE_FILE"
+      echo "Restart your shell or source your profile file to enable completion."
+    elif [ -n "$COMPLETION_SCRIPT_CMD" ]; then
+      echo "Completion already configured in $PROFILE_FILE"
+    else
+      echo "Could not generate completion script. Shell completion will not be available."
+    fi
   else
-    echo "Completion already configured in $PROFILE_FILE"
+    echo "Python3 not found. Skipping completion setup."
   fi
 fi
 
