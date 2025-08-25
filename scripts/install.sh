@@ -61,8 +61,9 @@ esac
 # Use python directly to generate the completion command, to avoid click Aborted error in docker context
 if [ -n "$PROFILE_FILE" ]; then
 
-  # Generate completion command using Docker so dependencies are available
-  COMPLETION_SCRIPT_CMD=$(docker run --rm awsctl:latest awsctl completion "$SHELL_TYPE")
+  # Generate completion command. We must use the host awsctl script and have it generate the completion script.
+  # The awsctl script will call 'docker run' to execute the command with the right dependencies.
+  COMPLETION_SCRIPT_CMD=$("$BIN_DIR/awsctl" completion "$SHELL_TYPE")
 
   if ! grep -q "$COMPLETION_SCRIPT_CMD" "$PROFILE_FILE" 2>/dev/null; then
     echo "Adding completion to $PROFILE_FILE"
