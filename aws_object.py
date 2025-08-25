@@ -30,7 +30,11 @@ class AwsObject():
     
     def valid_user(self):
         try:
-            iam_client = boto3.client('iam')
+            iam_client = boto3.client(
+                'iam',
+                aws_access_key_id=self.aws_access_key_id,
+                aws_secret_access_key=self.aws_secret_access_key
+            )
             response = iam_client.get_user()
             return True
         except Exception as e:
@@ -52,7 +56,12 @@ class Ec2():
         for name, id in self.valid_images[0].items():
             if name == image_id_or_name or id == image_id_or_name:
                 image_id_or_name = id
-                ec2 = boto3.resource('ec2',region_name = self.region_name)
+                ec2 = boto3.resource(
+                    'ec2',
+                    region_name=self.region_name,
+                    aws_access_key_id=self.aws_object.aws_access_key_id,
+                    aws_secret_access_key=self.aws_object.aws_secret_access_key
+                )
                 try:
                     instances = ec2.create_instances(
                         
@@ -71,7 +80,12 @@ class Ec2():
 
 
     def get_id(self):
-        ec2 = boto3.client('ec2',region_name = self.region_name)
+        ec2 = boto3.client(
+            'ec2',
+            region_name=self.region_name,
+            aws_access_key_id=self.aws_object.aws_access_key_id,
+            aws_secret_access_key=self.aws_object.aws_secret_access_key
+        )
         custom_filter = [{
             'Name':'tag:Owner', 
             'Values': [self.aws_object.owner]},{
@@ -87,7 +101,12 @@ class Ec2():
         return instance_ids
 
     def stop(self,id):
-        ec2 = boto3.resource('ec2', region_name=self.region_name)
+        ec2 = boto3.resource(
+            'ec2',
+            region_name=self.region_name,
+            aws_access_key_id=self.aws_object.aws_access_key_id,
+            aws_secret_access_key=self.aws_object.aws_secret_access_key
+        )
         instance = ec2.Instance(id=id)
         instance.stop()
     
@@ -100,7 +119,12 @@ class Ec2():
         return True
 
     def start(self,id):
-        ec2 = boto3.resource('ec2', region_name=self.region_name)
+        ec2 = boto3.resource(
+            'ec2',
+            region_name=self.region_name,
+            aws_access_key_id=self.aws_object.aws_access_key_id,
+            aws_secret_access_key=self.aws_object.aws_secret_access_key
+        )
         instance = ec2.Instance(id=id)
         response = instance.start()
         return response
@@ -122,20 +146,6 @@ class Ec2():
         ls = ""
         for i in ids:
             ls += f"instance id: f{i}\n"
-    
-    def terminate(self, id):
-        ec2 = boto3.resource('ec2', region_name=self.region_name)
-        instance = ec2.Instance(id=id)
-        instance.terminate()
-        return True
-
-    def terminate_all(self):
-        ids = self.get_id()
-        if not ids:
-            return "There is no instances"
-        for _id in ids:
-            self.terminate(_id)
-        return True
 
 
 class S3():
@@ -143,7 +153,12 @@ class S3():
         self.aws_object = aws_object
 
     def create_bucket(self, bucket_name: str):
-        s3_client = boto3.client('s3', region_name=self.aws_object.region_name)
+        s3_client = boto3.client(
+            's3',
+            region_name=self.aws_object.region_name,
+            aws_access_key_id=self.aws_object.aws_access_key_id,
+            aws_secret_access_key=self.aws_object.aws_secret_access_key
+        )
         try:
             kwargs = {'Bucket': bucket_name}
             if self.aws_object.region_name != 'us-east-1':
@@ -166,7 +181,12 @@ class S3():
             return False
         
     def upload_file(self, bucket_name: str, file_path: str):
-        s3_client = boto3.client('s3', region_name=self.aws_object.region_name)
+        s3_client = boto3.client(
+            's3',
+            region_name=self.aws_object.region_name,
+            aws_access_key_id=self.aws_object.aws_access_key_id,
+            aws_secret_access_key=self.aws_object.aws_secret_access_key
+        )
         object_name = os.path.basename(file_path)
         try:
             s3_client.upload_file(file_path, bucket_name, object_name, ExtraArgs={"Tagging": f"Owner={self.aws_object.owner}&CreatedBy={self.aws_object.created_by}"})
@@ -176,7 +196,12 @@ class S3():
             return False
 
     def list_buckets(self):
-        s3_resource = boto3.resource('s3', region_name=self.aws_object.region_name)
+        s3_resource = boto3.resource(
+            's3',
+            region_name=self.aws_object.region_name,
+            aws_access_key_id=self.aws_object.aws_access_key_id,
+            aws_secret_access_key=self.aws_object.aws_secret_access_key
+        )
         owned_buckets = []
         for bucket in s3_resource.buckets.all():
             try:
@@ -201,46 +226,17 @@ class S3():
                 raise
         return owned_buckets
 
-    def delete_bucket(self, bucket_name: str):
-        s3_resource = boto3.resource('s3', region_name=self.aws_object.region_name)
-        bucket = s3_resource.Bucket(bucket_name)
-        try:
-            # Try deleting all object versions first (handles versioned buckets)
-            try:
-                bucket.object_versions.delete()
-            except Exception:
-                pass
-            # Delete all current objects
-            bucket.objects.all().delete()
-            # Delete bucket
-            bucket.delete()
-            return True
-        except ClientError as e:
-            print(f"Error deleting bucket: {e}")
-            return False
-
-    def delete_object(self, bucket_name: str, key: str):
-        s3_client = boto3.client('s3', region_name=self.aws_object.region_name)
-        try:
-            s3_client.delete_object(Bucket=bucket_name, Key=key)
-            return True
-        except ClientError as e:
-            print(f"Error deleting object: {e}")
-            return False
-
 
 
 class Route53():
-    def __init__(self,aws_object: AwsObject,domain_name, create_if_missing: bool = True):
-        self.route53 = boto3.client('route53')
+    def __init__(self,aws_object: AwsObject,domain_name):
+        self.route53 = boto3.client(
+            'route53',
+            aws_access_key_id=aws_object.aws_access_key_id,
+            aws_secret_access_key=aws_object.aws_secret_access_key
+        )
         self.aws_object = aws_object
-        if create_if_missing:
-            self.resourceId = self.create_zone(domain_name)
-        else:
-            self.resourceId = self._find_zone_id_full(domain_name)
-            if self.resourceId is None:
-                # Fallback to create if not found
-                self.resourceId = self.create_zone(domain_name)
+        self.resourceId = self.create_zone(domain_name)
     
     def create_zone(self, domain_name):
         response = self.route53.create_hosted_zone(
@@ -267,21 +263,6 @@ class Route53():
         )
         # Keep the full id for other APIs (moto expects full id in HostedZoneId)
         return resource_full_id
-
-    def _find_zone_id_full(self, domain_name):
-        # Returns full id (/hostedzone/XYZ) if exists, otherwise None
-        try:
-            resp = self.route53.list_hosted_zones_by_name(DNSName=domain_name)
-            zones = resp.get('HostedZones', [])
-            fqdn = domain_name if domain_name.endswith('.') else f"{domain_name}."
-            for z in zones:
-                if z.get('Name') == fqdn:
-                    full_id = z.get('Id')
-                    self.zone_id_only = full_id.split('/')[-1]
-                    return full_id
-        except Exception:
-            pass
-        return None
     
     def create_record(self, name, ip, dns_type="A", ttl=300):
         response = self.route53.change_resource_record_sets(
@@ -391,30 +372,6 @@ class Route53():
             }
         )
         return response
-
-    def list_records(self):
-        paginator = self.route53.get_paginator('list_resource_record_sets')
-        records = []
-        for page in paginator.paginate(HostedZoneId=self.resourceId):
-            records.extend(page.get('ResourceRecordSets', []))
-        return records
-
-    def delete_zone(self):
-        # Remove non-NS/SOA records then delete the zone
-        records = self.list_records()
-        changes = []
-        for rr in records:
-            if rr.get('Type') in ('NS', 'SOA'):
-                continue
-            changes.append({'Action': 'DELETE', 'ResourceRecordSet': rr})
-        # Apply in chunks of up to 100 changes per request
-        for i in range(0, len(changes), 100):
-            batch = {'Changes': changes[i:i+100]}
-            if batch['Changes']:
-                self.route53.change_resource_record_sets(HostedZoneId=self.resourceId, ChangeBatch=batch)
-        # Finally delete the zone
-        self.route53.delete_hosted_zone(Id=self.zone_id_only)
-        return True
 
 
 
