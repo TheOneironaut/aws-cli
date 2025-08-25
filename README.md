@@ -45,10 +45,74 @@ $env:AWS_SECRET_ACCESS_KEY="your_secret_key_here"
 
 ## הרצה
 
-להרצת הכלי:
-```bash
-uv run python main.py
+להרצת ה-CLI עם `uv` (ללא התקנה):
+
+```powershell
+# עזרה כללית
+uv run python main.py --help
+
+# שימוש עם משתני סביבה (מומלץ)
+$env:AWS_ACCESS_KEY_ID = "..."; $env:AWS_SECRET_ACCESS_KEY = "..."; $env:AWS_OWNER = "your-name"; `
+uv run python main.py ec2 list
+
+# או העברת פרמטרים בשורת הפקודה
+uv run python main.py --aws-access-key-id "..." --aws-secret-access-key "..." --owner "your-name" ec2 list
 ```
+
+הערה: הוגדר גם entry point בשם `aws-cli` ב-`pyproject.toml`, אבל כדי להשתמש בו כפקודה גלובלית יש להתקין את החבילה ל-venv:
+
+```powershell
+uv pip install -e .
+aws-cli --help
+```
+
+### דוגמאות שימוש
+
+```powershell
+# הוספת משתמש (שומר credentials לקובץ ומשתמש ב-IAM GetUser לאימות)
+uv run python main.py add-user
+
+# EC2
+uv run python main.py ec2 create --type t3.micro --image ubuntu
+uv run python main.py ec2 list
+uv run python main.py ec2 stop           # עוצר את כל המכונות המתויגות בבעלותך
+uv run python main.py ec2 stop --id i-0123456789abcdef0
+uv run python main.py ec2 start          # מפעיל את כל המכונות המתויגות בבעלותך
+
+# S3
+uv run python main.py s3 create-bucket my-bucket-name
+uv run python main.py s3 upload --bucket my-bucket-name ./path/to/file.txt
+uv run python main.py s3 list-buckets
+
+# Route53
+uv run python main.py route53 create-zone example.com
+uv run python main.py route53 create-record example.com www.example.com 1.2.3.4 --type A --ttl 60
+uv run python main.py route53 update-record example.com www.example.com --type A --ip 2.2.2.2 --ttl 120
+uv run python main.py route53 delete-record example.com www.example.com
+```
+
+## הרצה בקונטיינר (Docker) באופן אינטראקטיבי
+
+כעת הקונטיינר נפתח ל-shell, ואתה יכול להריץ בתוכו את `awsctl` ישירות ולקבל פרומפט להזנת פרטים (אין חובה להעביר משתני סביבה):
+
+```powershell
+# Build image (מריצים מתיקיית הפרויקט)
+docker build -t awsctl:latest .
+
+# פתיחת shell אינטראקטיבי בתוך הקונטיינר ומיפוי התיקייה הנוכחית לעבודה נוחה
+docker run --rm -it -v ${PWD}:/work -w /work awsctl:latest
+
+# בתוך ה-shell שנפתח:
+awsctl --help
+awsctl ec2 list
+# במידה ואין משתני סביבה, תתבקש/י להזין: AWS Access Key ID, Secret, Owner וכו'
+```
+
+טיפים:
+- כדי לשמור קובץ credentials ביציאה מחוץ לקונטיינר, ניתן למפות את תיקיית ה-Home:
+    - בלינוקס/מק: `-v ${HOME}:/root`
+    - ב-Windows (PowerShell): `-v ${env:USERPROFILE}:/root`
+- אפשר גם להמשיך להעביר משתני סביבה אם נוח יותר: `-e AWS_ACCESS_KEY_ID=... -e AWS_SECRET_ACCESS_KEY=... -e AWS_OWNER=...`.
 
 ## בדיקות
 
@@ -107,3 +171,36 @@ Notes:
     ├── test_route53.py
     └── test_s3.py
 ```
+
+## הרצה כפקודה מקומית שמריצה Docker מאחורי הקלעים
+
+כדי להריץ `awsctl` ישירות מהמחשב אבל בפועל בתוך הקונטיינר, צור/השתמש בעוטפים שבפרויקט:
+
+1) ודא שבנית את האימג׳:
+```powershell
+docker build -t awsctl:latest .
+```
+
+2) Windows PowerShell:
+     - הפעל:
+         ```powershell
+         .\scripts\awsctl.ps1 --help
+         .\scripts\awsctl.ps1 ec2 list
+         ```
+     - כדי לקרוא לפקודה כ-`awsctl` מכל מקום, הוסף Alias ב-Profile:
+         ```powershell
+         notepad $PROFILE
+         # הוסף שורה:
+         Set-Alias awsctl "C:\\path\\to\\repo\\scripts\\awsctl.ps1"
+         ```
+
+3) Linux/Mac:
+     - עשה את הסקריפט להרצה והעתק לנתיב ב-PATH:
+         ```bash
+         chmod +x scripts/awsctl
+         sudo cp scripts/awsctl /usr/local/bin/awsctl
+         awsctl --help
+         awsctl ec2 list
+         ```
+
+הסקריפטים ממפים אוטומטית את התיקייה הנוכחית ל-`/work` ואת תיקיית ה-Home ל-`/root`, כך שקבצי `~/.aws/credentials` יישמרו מחוץ לקונטיינר ותוכל/י לעבוד עם קבצים מקומיים.

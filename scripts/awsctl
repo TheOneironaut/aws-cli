@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+set -e
+
+WORKDIR="$(pwd)"
+HOME_DIR="${HOME:-/root}"
+
+exec docker run --rm -it \
+  -v "$WORKDIR:/work" -w /work \
+  -v "$HOME_DIR:/root" \
+  --entrypoint awsctl \
+  awsctl:latest "$@"

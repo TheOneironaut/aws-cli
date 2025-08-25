@@ -1,0 +1,9 @@
+repos:
+- repo: local
+  hooks:
+    - id: pytest-cov
+      name: pytest
+  entry: uv run pytest -v --ignore=tests/integration --cov --cov-report= --cov-fail-under=80
+      language: system
+      pass_filenames: false
+      always_run: true

@@ -122,6 +122,20 @@ class Ec2():
         ls = ""
         for i in ids:
             ls += f"instance id: f{i}\n"
+    
+    def terminate(self, id):
+        ec2 = boto3.resource('ec2', region_name=self.region_name)
+        instance = ec2.Instance(id=id)
+        instance.terminate()
+        return True
+
+    def terminate_all(self):
+        ids = self.get_id()
+        if not ids:
+            return "There is no instances"
+        for _id in ids:
+            self.terminate(_id)
+        return True
 
 
 class S3():
@@ -187,13 +201,46 @@ class S3():
                 raise
         return owned_buckets
 
+    def delete_bucket(self, bucket_name: str):
+        s3_resource = boto3.resource('s3', region_name=self.aws_object.region_name)
+        bucket = s3_resource.Bucket(bucket_name)
+        try:
+            # Try deleting all object versions first (handles versioned buckets)
+            try:
+                bucket.object_versions.delete()
+            except Exception:
+                pass
+            # Delete all current objects
+            bucket.objects.all().delete()
+            # Delete bucket
+            bucket.delete()
+            return True
+        except ClientError as e:
+            print(f"Error deleting bucket: {e}")
+            return False
+
+    def delete_object(self, bucket_name: str, key: str):
+        s3_client = boto3.client('s3', region_name=self.aws_object.region_name)
+        try:
+            s3_client.delete_object(Bucket=bucket_name, Key=key)
+            return True
+        except ClientError as e:
+            print(f"Error deleting object: {e}")
+            return False
+
 
 
 class Route53():
-    def __init__(self,aws_object: AwsObject,domain_name):
+    def __init__(self,aws_object: AwsObject,domain_name, create_if_missing: bool = True):
         self.route53 = boto3.client('route53')
         self.aws_object = aws_object
-        self.resourceId = self.create_zone(domain_name)
+        if create_if_missing:
+            self.resourceId = self.create_zone(domain_name)
+        else:
+            self.resourceId = self._find_zone_id_full(domain_name)
+            if self.resourceId is None:
+                # Fallback to create if not found
+                self.resourceId = self.create_zone(domain_name)
     
     def create_zone(self, domain_name):
         response = self.route53.create_hosted_zone(
@@ -220,6 +267,21 @@ class Route53():
         )
         # Keep the full id for other APIs (moto expects full id in HostedZoneId)
         return resource_full_id
+
+    def _find_zone_id_full(self, domain_name):
+        # Returns full id (/hostedzone/XYZ) if exists, otherwise None
+        try:
+            resp = self.route53.list_hosted_zones_by_name(DNSName=domain_name)
+            zones = resp.get('HostedZones', [])
+            fqdn = domain_name if domain_name.endswith('.') else f"{domain_name}."
+            for z in zones:
+                if z.get('Name') == fqdn:
+                    full_id = z.get('Id')
+                    self.zone_id_only = full_id.split('/')[-1]
+                    return full_id
+        except Exception:
+            pass
+        return None
     
     def create_record(self, name, ip, dns_type="A", ttl=300):
         response = self.route53.change_resource_record_sets(
@@ -329,6 +391,30 @@ class Route53():
             }
         )
         return response
+
+    def list_records(self):
+        paginator = self.route53.get_paginator('list_resource_record_sets')
+        records = []
+        for page in paginator.paginate(HostedZoneId=self.resourceId):
+            records.extend(page.get('ResourceRecordSets', []))
+        return records
+
+    def delete_zone(self):
+        # Remove non-NS/SOA records then delete the zone
+        records = self.list_records()
+        changes = []
+        for rr in records:
+            if rr.get('Type') in ('NS', 'SOA'):
+                continue
+            changes.append({'Action': 'DELETE', 'ResourceRecordSet': rr})
+        # Apply in chunks of up to 100 changes per request
+        for i in range(0, len(changes), 100):
+            batch = {'Changes': changes[i:i+100]}
+            if batch['Changes']:
+                self.route53.change_resource_record_sets(HostedZoneId=self.resourceId, ChangeBatch=batch)
+        # Finally delete the zone
+        self.route53.delete_hosted_zone(Id=self.zone_id_only)
+        return True
 
 
 
