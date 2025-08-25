@@ -1,4 +1,5 @@
 import sys
+import os
 import click
 from aws_object import AwsObject, Ec2, S3, Route53
 
@@ -16,6 +17,12 @@ class AwsContext:
 @click.pass_context
 def cli(ctx: click.Context, aws_access_key_id: str, aws_secret_access_key: str, owner: str, region_name: str):
     """CLI for managing AWS resources based on aws_object module."""
+    # If completion script is being generated, don't prompt for credentials
+    if os.environ.get('_AWSCTL_COMPLETE'):
+        aws_access_key_id = aws_access_key_id or 'dummy'
+        aws_secret_access_key = aws_secret_access_key or 'dummy'
+        owner = owner or 'dummy'
+
     aws_obj = AwsObject(aws_access_key_id, aws_secret_access_key, owner, region_name)
     ctx.obj = AwsContext(aws_obj)
 
