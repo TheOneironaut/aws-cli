@@ -60,9 +60,9 @@ esac
 
 # Use python directly to generate the completion command, to avoid click Aborted error in docker context
 if [ -n "$PROFILE_FILE" ]; then
-  pushd "$REPO_DIR" > /dev/null
-  COMPLETION_SCRIPT_CMD=$(python3 main.py completion "$SHELL_TYPE")
-  popd > /dev/null
+
+  # Generate completion command using Docker so dependencies are available
+  COMPLETION_SCRIPT_CMD=$(docker run --rm -v "$REPO_DIR:/app" -w /app awsctl:latest python main.py completion "$SHELL_TYPE")
 
   if ! grep -q "$COMPLETION_SCRIPT_CMD" "$PROFILE_FILE" 2>/dev/null; then
     echo "Adding completion to $PROFILE_FILE"
