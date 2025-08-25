@@ -57,11 +57,11 @@ case "$SHELL_TYPE" in
     ;;
 esac
 
+
+# Use python directly to generate the completion command, to avoid click Aborted error in docker context
 if [ -n "$PROFILE_FILE" ]; then
-  # The awsctl command is a wrapper for docker, which requires the PWD to be mounted.
-  # We need to cd to a directory that is guaranteed to exist.
-  pushd "$HOME" > /dev/null
-  COMPLETION_SCRIPT_CMD=$($BIN_DIR/awsctl completion "$SHELL_TYPE")
+  pushd "$REPO_DIR" > /dev/null
+  COMPLETION_SCRIPT_CMD=$(python3 main.py completion "$SHELL_TYPE")
   popd > /dev/null
 
   if ! grep -q "$COMPLETION_SCRIPT_CMD" "$PROFILE_FILE" 2>/dev/null; then
