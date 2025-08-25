@@ -10,9 +10,9 @@ class AwsContext:
 
 
 @click.group()
-@click.option('--aws-access-key-id', envvar='AWS_ACCESS_KEY_ID', prompt='AWS Access Key ID', hide_input=False, required=False)
-@click.option('--aws-secret-access-key', envvar='AWS_SECRET_ACCESS_KEY', prompt='AWS Secret Access Key', hide_input=True, required=False)
-@click.option('--owner', envvar='AWS_OWNER', prompt='Owner tag', required=False)
+@click.option('--aws-access-key-id', envvar='AWS_ACCESS_KEY_ID', required=False)
+@click.option('--aws-secret-access-key', envvar='AWS_SECRET_ACCESS_KEY', required=False)
+@click.option('--owner', envvar='AWS_OWNER', required=False)
 @click.option('--region', 'region_name', envvar='AWS_DEFAULT_REGION', default='us-east-1', show_default=True, help='AWS region to use')
 @click.pass_context
 def cli(ctx: click.Context, aws_access_key_id: str, aws_secret_access_key: str, owner: str, region_name: str):
@@ -22,6 +22,14 @@ def cli(ctx: click.Context, aws_access_key_id: str, aws_secret_access_key: str, 
         aws_access_key_id = aws_access_key_id or 'dummy'
         aws_secret_access_key = aws_secret_access_key or 'dummy'
         owner = owner or 'dummy'
+    else:
+        # Only prompt for missing credentials if not generating completion
+        if not aws_access_key_id:
+            aws_access_key_id = click.prompt('AWS Access Key ID', type=str)
+        if not aws_secret_access_key:
+            aws_secret_access_key = click.prompt('AWS Secret Access Key', type=str, hide_input=True)
+        if not owner:
+            owner = click.prompt('Owner tag', type=str)
 
     aws_obj = AwsObject(aws_access_key_id, aws_secret_access_key, owner, region_name)
     ctx.obj = AwsContext(aws_obj)
