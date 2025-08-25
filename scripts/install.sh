@@ -34,4 +34,45 @@ ensure_dir "$BIN_DIR"
 cp "$REPO_DIR/scripts/awsctl" "$BIN_DIR/awsctl"
 chmod +x "$BIN_DIR/awsctl"
 
+echo "Configuring shell completion..."
+SHELL_TYPE=""
+# Detect shell from the SHELL environment variable
+if [ -n "$SHELL" ]; then
+  SHELL_TYPE=$(basename "$SHELL")
+fi
+
+PROFILE_FILE=""
+case "$SHELL_TYPE" in
+  bash)
+    PROFILE_FILE="$HOME/.bashrc"
+    ;;
+  zsh)
+    PROFILE_FILE="$HOME/.zshrc"
+    ;;
+  fish)
+    PROFILE_FILE="$HOME/.config/fish/config.fish"
+    ;;
+  *)
+    echo "Could not detect shell. Skipping completion setup."
+    ;;
+esac
+
+if [ -n "$PROFILE_FILE" ]; then
+  # The awsctl command is a wrapper for docker, which requires the PWD to be mounted.
+  # We need to cd to a directory that is guaranteed to exist.
+  pushd "$HOME" > /dev/null
+  COMPLETION_SCRIPT_CMD=$($BIN_DIR/awsctl completion "$SHELL_TYPE")
+  popd > /dev/null
+
+  if ! grep -q "$COMPLETION_SCRIPT_CMD" "$PROFILE_FILE" 2>/dev/null; then
+    echo "Adding completion to $PROFILE_FILE"
+    echo "" >> "$PROFILE_FILE"
+    echo "# awsctl completion" >> "$PROFILE_FILE"
+    echo "$COMPLETION_SCRIPT_CMD" >> "$PROFILE_FILE"
+    echo "Restart your shell or source your profile file to enable completion."
+  else
+    echo "Completion already configured in $PROFILE_FILE"
+  fi
+fi
+
 echo "Installation complete. Try: awsctl --help"

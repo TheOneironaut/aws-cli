@@ -202,5 +202,21 @@ def r53_delete_record(ctx_obj: AwsContext, zone_domain: str, name: str):
     click.echo(f'Record delete status: {code}')
 
 
+# Shell completion command
+@cli.command('completion', help='Generate shell completion script', hidden=True)
+@click.argument('shell', type=click.Choice(['bash', 'zsh', 'fish', 'powershell']))
+def completion(shell: str):
+    """Generates the shell completion script."""
+    prog_name = cli.name or 'awsctl'
+    if shell == 'powershell':
+        # For PowerShell, we output a command to be added to the profile
+        click.echo(f'Register-ArgumentCompleter -CommandName {prog_name} -ScriptBlock ([ScriptBlock]::Create((& {prog_name} _ARC_POWERSHELL_COMPLETE_)))')
+    else:
+        # For other shells, we can source the output directly
+        complete_var = f"_{prog_name.upper().replace('-', '_')}_COMPLETE"
+        script = f'{complete_var}=source_{shell} {prog_name}'
+        click.echo(f'eval "$({script})"')
+
+
 if __name__ == '__main__':
     cli()
