@@ -74,9 +74,9 @@ class Ec2():
         ec2 = boto3.client('ec2',region_name = self.region_name)
         custom_filter = [{
             'Name':'tag:Owner', 
-            'Values': ['amitay']},{
+            'Values': [self.aws_object.owner]},{
             'Name':'tag:CreatedBy', 
-            'Values': ['platform-cli']}]
+            'Values': [self.aws_object.created_by]}]
             
         response = ec2.describe_instances(Filters=custom_filter)
         instance_ids = []
@@ -179,12 +179,12 @@ class S3():
                 if bucket_owner == self.aws_object.owner and bucket_creator == self.aws_object.created_by:
                     owned_buckets.append(bucket.name)
             except ClientError as e:
-                if e.response['Error']['Code'] == 'NoSuchTagSet':
-                    # Bucket has no tags, so we can safely skip it
+                code = e.response['Error'].get('Code')
+                if code in ('NoSuchTagSet', 'AccessDenied'):
+                    # Bucket has no tags or access is restricted; skip it
                     continue
-                else:
-                    # Re-raise other errors
-                    raise
+                # Re-raise unexpected errors
+                raise
         return owned_buckets
 
 

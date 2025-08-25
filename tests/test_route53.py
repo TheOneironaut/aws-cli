@@ -1,5 +1,9 @@
 import pytest
-from moto import mock_aws
+try:
+    from moto import mock_aws
+except ImportError:  # pragma: no cover - environment without dev deps
+    import pytest as _pytest
+    _pytest.skip("moto is not installed; run `uv sync --dev` to enable these tests.", allow_module_level=True)
 import boto3
 from aws_object import AwsObject, Route53
 
