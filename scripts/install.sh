@@ -62,7 +62,7 @@ esac
 if [ -n "$PROFILE_FILE" ]; then
 
   # Generate completion command using Docker so dependencies are available
-  COMPLETION_SCRIPT_CMD=$(docker run --rm -v "$REPO_DIR:/app" -w /app awsctl:latest python main.py completion "$SHELL_TYPE")
+  COMPLETION_SCRIPT_CMD=$(docker run --rm -v "$REPO_DIR:/app" -w /app awsctl:latest awsctl completion "$SHELL_TYPE")
 
   if ! grep -q "$COMPLETION_SCRIPT_CMD" "$PROFILE_FILE" 2>/dev/null; then
     echo "Adding completion to $PROFILE_FILE"
