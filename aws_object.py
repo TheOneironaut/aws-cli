@@ -1,5 +1,6 @@
 import boto3
 import os
+from botocore.exceptions import ClientError
 
 class AwsObject():
     def __init__(self,aws_access_key_id,aws_secret_access_key,owner,region_name = "us-east-1"):
@@ -127,92 +128,146 @@ class S3():
     def __init__(self, aws_object: AwsObject):
         self.aws_object = aws_object
 
-    def create_bucket(self, bucket_name: str, state = "private"):
-        if state not in ["private", "public"]:
-            return False
+    def create_bucket(self, bucket_name: str):
         s3_client = boto3.client('s3', region_name=self.aws_object.region_name)
         try:
-            # For regions other than us-east-1, we need to specify the LocationConstraint
-            if self.aws_object.region_name == 'us-east-1':
-                s3_client.create_bucket(Bucket=bucket_name)
-            else:
-                s3_client.create_bucket(
-                    Bucket=bucket_name,
-                    CreateBucketConfiguration={
-                        'LocationConstraint': self.aws_object.region_name
-                    }
-                )
-            
-            # Add tags to the bucket
-            s3_client.put_bucket_tagging(
+            s3_client.create_bucket(
                 Bucket=bucket_name,
-                Tagging={
-                    'TagSet': [
+                CreateBucketConfiguration={
+                    'LocationConstraint': self.aws_object.region_name,
+                    'Tags': [
                         {'Key': 'Owner', 'Value': self.aws_object.owner},
                         {'Key': 'CreatedBy', 'Value': self.aws_object.created_by}
                     ]
                 }
             )
-            
-            if state == "public":
-                try:
-                    # Try to use simpler ACL method for public read access
-                    s3_client.put_bucket_acl(Bucket=bucket_name, ACL='public-read')
-                except Exception as acl_error:
-                    # If ACL fails (due to Block Public Access), create bucket as private
-                    # but still return True since bucket was created successfully
-                    print(f"Warning: Could not set bucket to public due to Block Public Access settings: {acl_error}")
-                    print(f"Bucket '{bucket_name}' was created as private instead.")
             return True
         except Exception as e:
-            print(f"Error creating bucket: {e}")  # For debugging
+            print(f"Error creating bucket: {e}")
             return False
-
-    def is_bucket_public(self, bucket_name: str):
-        """Check if a bucket has public read access."""
+        
+    def upload_file(self, bucket_name: str, file_path: str):
         s3_client = boto3.client('s3', region_name=self.aws_object.region_name)
+        object_name = os.path.basename(file_path)
         try:
-            acl = s3_client.get_bucket_acl(Bucket=bucket_name)
-            # Check if there's a public read grant
-            for grant in acl.get('Grants', []):
-                grantee = grant.get('Grantee', {})
-                if (grantee.get('Type') == 'Group' and 
-                    grantee.get('URI') == 'http://acs.amazonaws.com/groups/global/AllUsers' and
-                    grant.get('Permission') in ['READ', 'FULL_CONTROL']):
-                    return True
-            return False
-        except Exception as e:
-            print(f"Error checking bucket ACL: {e}")
-            return False
-
-    def upload_file(self, bucket_name: str, file_path: str, aws_object: AwsObject, object_name: str = None):
-        s3_client = boto3.client('s3', region_name=aws_object.region_name)
-        try:
-            s3_client.upload_file(file_path, bucket_name, object_name or file_path, ExtraArgs={"Tagging": f"Owner={aws_object.owner}&CreatedBy={aws_object.created_by}"})
+            s3_client.upload_file(file_path, bucket_name, object_name, ExtraArgs={"Tagging": f"Owner={self.aws_object.owner}&CreatedBy={self.aws_object.created_by}"})
             return True
         except Exception as e:
+            print(f"Error uploading file: {e}")
             return False
 
-    def list_files(self, bucket_name: str, aws_object: AwsObject):
-        s3_client = boto3.client('s3', region_name=aws_object.region_name)
-        try:
-            response = s3_client.list_objects_v2(Bucket=bucket_name, Tagging=f"Owner={aws_object.owner}&CreatedBy={aws_object.created_by}")
-            return response.get('Contents', [])
-        except Exception as e:
-            return []
+    def list_buckets(self):
+        s3_resource = boto3.resource('s3', region_name=self.aws_object.region_name)
+        owned_buckets = []
+        for bucket in s3_resource.buckets.all():
+            bucket_tags = bucket.Tagging().tag_set
+            bucket_owner = None
+            bucket_creator = None
+            for tag in bucket_tags:
+                if tag['Key'] == 'Owner':
+                    bucket_owner = tag['Value']
+                if tag['Key'] == 'CreatedBy':
+                    bucket_creator = tag['Value']
+            if bucket_owner == self.aws_object.owner and bucket_creator == self.aws_object.created_by:
+                owned_buckets.append(bucket.name)
+        return owned_buckets
 
-    def is_bucket_public(self, bucket_name: str):
-        """Check if a bucket is configured for public access."""
-        s3_client = boto3.client('s3', region_name=self.aws_object.region_name)
-        try:
-            acl = s3_client.get_bucket_acl(Bucket=bucket_name)
-            # Check if any grant gives public read access
-            for grant in acl.get('Grants', []):
-                grantee = grant.get('Grantee', {})
-                if (grantee.get('Type') == 'Group' and 
-                    grantee.get('URI') == 'http://acs.amazonaws.com/groups/global/AllUsers' and
-                    grant.get('Permission') == 'READ'):
-                    return True
-            return False
-        except Exception:
-            return False
+
+
+class Route53():
+    def __init__(self,aws_object: AwsObject,domain_name):
+        self.route53 = boto3.client('route53')
+        self.aws_object = aws_object
+        self.resourceId = self.create_zone(domain_name)
+    
+    def create_zone(self, domain_name):
+        response = self.route53.create_hosted_zone(
+        Name=domain_name,
+    )
+        resourceId=response['HostedZone']['Id']
+        self.route53.change_tags_for_resource(
+        ResourceType='healthcheck'|'hostedzone',
+        ResourceId=resourceId,
+        AddTags=[
+            {
+                'Key': 'Owner',
+                'Value': self.aws_object.owner
+            },
+             {
+                'Key': 'CreatedBy',
+                'Value': self.aws_object.created_by
+            },
+        ]
+    )
+        return resourceId
+    
+    def create_record(self, name, ip, dns_type="A", ttl=300):
+        response = self.route53.change_resource_record_sets(
+            HostedZoneId=self.resourceId,
+            ChangeBatch={
+                'Changes': [
+                    {
+                        'Action': 'CREATE',
+                        'ResourceRecordSet': {
+                            'Name': name,
+                            'Type': dns_type,
+                            'TTL': ttl,
+                            'ResourceRecords': [{'Value': ip}],
+                        },
+                    },
+                ]
+            }
+        )
+        return response
+
+
+    def delete_record(self,name):
+        response = self.route53.change_resource_record_sets(
+        HostedZoneId=self.resourceId,
+        ChangeBatch={
+            'Changes': [
+                {
+                    'Action': 'DELETE',
+                    'ResourceRecordSet': {
+                        'Name': name,
+                    },
+                },
+            ]
+        }
+    )
+        return response
+
+    def update_record(self, name, dns_type, ip=None, ttl=None):
+        if ip is None and ttl is None:
+            response = "you must update ip or ttl"
+        elif ip is None:
+            rsrecord = {
+            'ResourceRecordSet': {
+                'Name': name,
+                'Type': dns_type,
+                'TTL': ttl,
+            },
+        }
+        elif ttl is None:
+            rsrecord = {
+            'ResourceRecordSet': {
+                'Name': name,
+                'Type': dns_type,
+                'ResourceRecords': [{'Value': ip}],
+            },
+        }
+        response = self.route53.change_resource_record_sets(
+            HostedZoneId=self.resourceId,
+            ChangeBatch={
+                'Changes': [
+                    {
+                        'Action': 'UPSERT',
+                        'ResourceRecordSet': rsrecord
+                    },
+                ]
+            }
+        )
+        return response
+
+        
+
