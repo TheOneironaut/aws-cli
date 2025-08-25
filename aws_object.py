@@ -1,6 +1,7 @@
 import boto3
 import os
 from botocore.exceptions import ClientError
+import uuid
 
 class AwsObject():
     def __init__(self,aws_access_key_id,aws_secret_access_key,owner,region_name = "us-east-1"):
@@ -28,8 +29,8 @@ class AwsObject():
     
     
     def valid_user(self):
-        iam_client = boto3.client('iam')
         try:
+            iam_client = boto3.client('iam')
             response = iam_client.get_user()
             return True
         except Exception as e:
@@ -100,9 +101,8 @@ class Ec2():
 
     def start(self,id):
         ec2 = boto3.resource('ec2', region_name=self.region_name)
-        response = ec2.start_instances(
-        InstanceIds=[f"{id}"])
-
+        instance = ec2.Instance(id=id)
+        response = instance.start()
         return response
    
         
@@ -131,11 +131,16 @@ class S3():
     def create_bucket(self, bucket_name: str):
         s3_client = boto3.client('s3', region_name=self.aws_object.region_name)
         try:
-            s3_client.create_bucket(
+            kwargs = {'Bucket': bucket_name}
+            if self.aws_object.region_name != 'us-east-1':
+                kwargs['CreateBucketConfiguration'] = {
+                    'LocationConstraint': self.aws_object.region_name
+                }
+            s3_client.create_bucket(**kwargs)
+            s3_client.put_bucket_tagging(
                 Bucket=bucket_name,
-                CreateBucketConfiguration={
-                    'LocationConstraint': self.aws_object.region_name,
-                    'Tags': [
+                Tagging={
+                    'TagSet': [
                         {'Key': 'Owner', 'Value': self.aws_object.owner},
                         {'Key': 'CreatedBy', 'Value': self.aws_object.created_by}
                     ]
@@ -160,16 +165,26 @@ class S3():
         s3_resource = boto3.resource('s3', region_name=self.aws_object.region_name)
         owned_buckets = []
         for bucket in s3_resource.buckets.all():
-            bucket_tags = bucket.Tagging().tag_set
-            bucket_owner = None
-            bucket_creator = None
-            for tag in bucket_tags:
-                if tag['Key'] == 'Owner':
-                    bucket_owner = tag['Value']
-                if tag['Key'] == 'CreatedBy':
-                    bucket_creator = tag['Value']
-            if bucket_owner == self.aws_object.owner and bucket_creator == self.aws_object.created_by:
-                owned_buckets.append(bucket.name)
+            try:
+                bucket_tags = bucket.Tagging().tag_set
+                bucket_owner = None
+                bucket_creator = None
+                if not bucket_tags: # Handles buckets with empty tag sets
+                    continue
+                for tag in bucket_tags:
+                    if tag['Key'] == 'Owner':
+                        bucket_owner = tag['Value']
+                    if tag['Key'] == 'CreatedBy':
+                        bucket_creator = tag['Value']
+                if bucket_owner == self.aws_object.owner and bucket_creator == self.aws_object.created_by:
+                    owned_buckets.append(bucket.name)
+            except ClientError as e:
+                if e.response['Error']['Code'] == 'NoSuchTagSet':
+                    # Bucket has no tags, so we can safely skip it
+                    continue
+                else:
+                    # Re-raise other errors
+                    raise
         return owned_buckets
 
 
@@ -182,24 +197,29 @@ class Route53():
     
     def create_zone(self, domain_name):
         response = self.route53.create_hosted_zone(
-        Name=domain_name,
-    )
-        resourceId=response['HostedZone']['Id']
+            Name=domain_name,
+            CallerReference=str(uuid.uuid4())
+        )
+        resource_full_id = response['HostedZone']['Id']  # e.g. /hostedzone/ABCDEFG
+        # Store also the short id for APIs that require it
+        self.zone_id_only = resource_full_id.split('/')[-1]
+        # Tagging API expects only the short ID
         self.route53.change_tags_for_resource(
-        ResourceType='healthcheck'|'hostedzone',
-        ResourceId=resourceId,
-        AddTags=[
-            {
-                'Key': 'Owner',
-                'Value': self.aws_object.owner
-            },
-             {
-                'Key': 'CreatedBy',
-                'Value': self.aws_object.created_by
-            },
-        ]
-    )
-        return resourceId
+            ResourceType='hostedzone',
+            ResourceId=self.zone_id_only,
+            AddTags=[
+                {
+                    'Key': 'Owner',
+                    'Value': self.aws_object.owner
+                },
+                {
+                    'Key': 'CreatedBy',
+                    'Value': self.aws_object.created_by
+                },
+            ]
+        )
+        # Keep the full id for other APIs (moto expects full id in HostedZoneId)
+        return resource_full_id
     
     def create_record(self, name, ip, dns_type="A", ttl=300):
         response = self.route53.change_resource_record_sets(
@@ -222,54 +242,95 @@ class Route53():
 
 
     def delete_record(self,name):
-        response = self.route53.change_resource_record_sets(
-        HostedZoneId=self.resourceId,
-        ChangeBatch={
-            'Changes': [
+        # Route53 requires the full existing record (including TTL and ResourceRecords) to delete
+        # Fetch the current record set for the given name and type A
+        record_sets = self.route53.list_resource_record_sets(
+            HostedZoneId=self.resourceId,
+            StartRecordName=name,
+            StartRecordType='A',
+            MaxItems='1'
+        )
+        if not record_sets['ResourceRecordSets']:
+            raise ClientError(
                 {
-                    'Action': 'DELETE',
-                    'ResourceRecordSet': {
-                        'Name': name,
-                    },
+                    'Error': {
+                        'Code': 'NoSuchRecord',
+                        'Message': f'Record {name} not found'
+                    }
                 },
-            ]
-        }
-    )
+                'ChangeResourceRecordSets'
+            )
+        current = record_sets['ResourceRecordSets'][0]
+        # Ensure we matched the exact record name
+        if current.get('Name') != (name if name.endswith('.') else f"{name}.") or current.get('Type') != 'A':
+            raise ClientError(
+                {
+                    'Error': {
+                        'Code': 'NoSuchRecord',
+                        'Message': f'Record {name} not found'
+                    }
+                },
+                'ChangeResourceRecordSets'
+            )
+        response = self.route53.change_resource_record_sets(
+            HostedZoneId=self.resourceId,
+            ChangeBatch={
+                'Changes': [
+                    {
+                        'Action': 'DELETE',
+                        'ResourceRecordSet': current,
+                    },
+                ]
+            }
+        )
         return response
 
     def update_record(self, name, dns_type, ip=None, ttl=None):
         if ip is None and ttl is None:
-            response = "you must update ip or ttl"
-        elif ip is None:
-            rsrecord = {
-            'ResourceRecordSet': {
-                'Name': name,
-                'Type': dns_type,
-                'TTL': ttl,
-            },
+            return "you must update ip or ttl"
+
+        # Build the ResourceRecordSet for UPSERT
+        record_set = {
+            'Name': name,
+            'Type': dns_type,
         }
-        elif ttl is None:
-            rsrecord = {
-            'ResourceRecordSet': {
-                'Name': name,
-                'Type': dns_type,
-                'ResourceRecords': [{'Value': ip}],
-            },
-        }
+        if ip is not None:
+            record_set['ResourceRecords'] = [{'Value': ip}]
+
+        # TTL is required when specifying ResourceRecords (non-alias)
+        if ttl is not None:
+            record_set['TTL'] = ttl
+        else:
+            # Try to reuse existing TTL if present; otherwise default to 300
+            try:
+                existing = self.route53.list_resource_record_sets(
+                    HostedZoneId=self.resourceId,
+                    StartRecordName=name,
+                    StartRecordType=dns_type,
+                    MaxItems='1'
+                )
+                if existing['ResourceRecordSets'] and existing['ResourceRecordSets'][0].get('Name') == (name if name.endswith('.') else f"{name}."):
+                    existing_ttl = existing['ResourceRecordSets'][0].get('TTL')
+                    record_set['TTL'] = existing_ttl if existing_ttl is not None else 300
+                else:
+                    record_set['TTL'] = 300
+            except Exception:
+                record_set['TTL'] = 300
+
         response = self.route53.change_resource_record_sets(
             HostedZoneId=self.resourceId,
             ChangeBatch={
                 'Changes': [
                     {
                         'Action': 'UPSERT',
-                        'ResourceRecordSet': rsrecord
+                        'ResourceRecordSet': record_set,
                     },
                 ]
             }
         )
         return response
-    
-    
 
-        
+
+
+
 
